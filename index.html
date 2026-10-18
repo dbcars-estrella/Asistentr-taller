@@ -30,6 +30,8 @@ header{background:var(--head);color:#fff;padding:calc(env(safe-area-inset-top,0p
   display:flex;align-items:center;justify-content:space-between;gap:12px}
 header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.01em}
 header button{background:none;border:1px solid #ffffff44;color:#fff;border-radius:8px;padding:6px 12px;font:inherit;font-size:14px}
+.bar{display:flex;gap:8px}
+.panel{max-height:92%;overflow-y:auto}
 #msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;-webkit-overflow-scrolling:touch}
 .m{max-width:92%;padding:10px 14px;border-radius:14px;word-wrap:break-word}
 .m.u{align-self:flex-end;background:var(--user);color:#fff;border-bottom-right-radius:4px}
@@ -63,7 +65,7 @@ button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px soli
 <body>
 <header>
   <h1>Asistente de Taller</h1>
-  <button id="abrir" type="button">Ajustes</button>
+  <div class="bar"><button id="vozbtn" type="button">Voz: sí</button><button id="abrir" type="button">Ajustes</button></div>
 </header>
 
 <main id="msgs" aria-live="polite"></main>
@@ -80,6 +82,10 @@ button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px soli
     <input id="key" type="password" autocomplete="off" placeholder="sk-or-...">
     <label for="modelo">Modelo</label>
     <input id="modelo" type="text" autocomplete="off">
+    <label for="gkey">Clave de Google Cloud Text-to-Speech</label>
+    <input id="gkey" type="password" autocomplete="off" placeholder="AIza...">
+    <label for="voz">Voz</label>
+    <input id="voz" type="text" autocomplete="off">
     <div class="fila">
       <button id="borrar" type="button">Borrar chat</button>
       <button id="cerrar" type="button">Cerrar</button>
@@ -111,6 +117,41 @@ const store = {
 let historial = [];
 try { historial = JSON.parse(store.get('historial', '[]')) || []; } catch(e){ historial = []; }
 let ocupado = false;
+let vozOn = store.get('vozOn', '1') === '1';
+const player = new Audio();
+const SILENCIO = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+function desbloquear(){ try { player.src = SILENCIO; const p = player.play(); if (p) p.catch(()=>{}); } catch(e){} }
+function pararVoz(){ try { player.pause(); } catch(e){} if (window.speechSynthesis) speechSynthesis.cancel(); }
+function limpiar(t){ return t.replace(/[*`#]/g,'').replace(/^\s*[-•]\s+/gm,'').replace(/\s+/g,' ').trim().slice(0,4500); }
+async function hablar(texto){
+  if (!vozOn) return;
+  const t = limpiar(texto);
+  const gk = store.get('gkey', '');
+  if (gk){
+    try {
+      const nombre = store.get('voz', 'es-ES-Neural2-A');
+      const r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(gk), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: { text: t },
+          voice: { languageCode: nombre.split('-').slice(0, 2).join('-'), name: nombre },
+          audioConfig: { audioEncoding: 'MP3' }
+        })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error('TTS');
+      player.src = 'data:audio/mp3;base64,' + d.audioContent;
+      await player.play();
+      return;
+    } catch(e){ /* sigue con la voz del sistema */ }
+  }
+  if (window.speechSynthesis){
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = 'es-ES';
+    speechSynthesis.speak(u);
+  }
+}
 
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -163,6 +204,7 @@ async function enviar(texto){
   const key = store.get('key', '');
   if (!key){ abrirAjustes(); return; }
   ocupado = true; $('#send').disabled = true;
+  desbloquear(); pararVoz();
   historial.push({ role: 'user', content: texto });
   pintar();
   const espera = añadir('a', 'Pensando…');
@@ -182,6 +224,7 @@ async function enviar(texto){
     historial.push({ role: 'assistant', content: resp });
     store.set('historial', JSON.stringify(historial));
     pintar();
+    hablar(resp);
   } catch (e){
     historial.pop();
     espera.className = 'm a err';
@@ -205,6 +248,8 @@ $('#t').addEventListener('input', e => {
 function abrirAjustes(){
   $('#key').value = store.get('key', '');
   $('#modelo').value = store.get('modelo', 'anthropic/claude-sonnet-4.5');
+  $('#gkey').value = store.get('gkey', '');
+  $('#voz').value = store.get('voz', 'es-ES-Neural2-A');
   $('#ajustes').classList.add('on');
 }
 $('#abrir').onclick = abrirAjustes;
@@ -212,12 +257,21 @@ $('#cerrar').onclick = () => $('#ajustes').classList.remove('on');
 $('#guardar').onclick = () => {
   store.set('key', $('#key').value.trim());
   store.set('modelo', $('#modelo').value.trim() || 'anthropic/claude-sonnet-4.5');
+  store.set('gkey', $('#gkey').value.trim());
+  store.set('voz', $('#voz').value.trim() || 'es-ES-Neural2-A');
   $('#ajustes').classList.remove('on');
 };
 $('#borrar').onclick = () => {
   historial = []; store.set('historial', '[]');
   $('#ajustes').classList.remove('on'); pintar();
 };
+
+$('#vozbtn').onclick = () => {
+  vozOn = !vozOn; store.set('vozOn', vozOn ? '1' : '0');
+  $('#vozbtn').textContent = vozOn ? 'Voz: sí' : 'Voz: no';
+  if (!vozOn) pararVoz();
+};
+$('#vozbtn').textContent = vozOn ? 'Voz: sí' : 'Voz: no';
 
 pintar();
 </script>
