@@ -172,6 +172,7 @@ async function enviar(texto){
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
       body: JSON.stringify({
         model: store.get('modelo', 'anthropic/claude-sonnet-4.5'),
+        max_tokens: 1200,
         messages: [{ role: 'system', content: SYSTEM }, ...historial.slice(-20)]
       })
     });
