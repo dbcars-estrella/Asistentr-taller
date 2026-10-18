@@ -31,6 +31,8 @@ header{background:var(--head);color:#fff;padding:calc(env(safe-area-inset-top,0p
 header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.01em}
 header button{background:none;border:1px solid #ffffff44;color:#fff;border-radius:8px;padding:6px 12px;font:inherit;font-size:14px}
 .bar{display:flex;gap:8px}
+.probar{margin-top:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:9px 14px;font:inherit}
+#estado{font-size:14px;color:var(--muted);margin:8px 0 0;min-height:1em}
 .panel{max-height:92%;overflow-y:auto}
 #msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;-webkit-overflow-scrolling:touch}
 .m{max-width:92%;padding:10px 14px;border-radius:14px;word-wrap:break-word}
@@ -86,6 +88,8 @@ button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px soli
     <input id="gkey" type="password" autocomplete="off" placeholder="AIza...">
     <label for="voz">Voz</label>
     <input id="voz" type="text" autocomplete="off">
+    <button id="probar" type="button" class="probar">Probar voz</button>
+    <p id="estado"></p>
     <div class="fila">
       <button id="borrar" type="button">Borrar chat</button>
       <button id="cerrar" type="button">Cerrar</button>
@@ -100,7 +104,8 @@ const SYSTEM = `Eres un asistente de mecánica y electromecánica automotriz par
 - Para códigos OBD2/DTC: explica qué significa, causas habituales y cómo verificarlas.
 - Para datos técnicos (pares de apriete, capacidades, holguras, presiones): da el valor típico si lo conoces y avisa de que debe confirmarse en el manual del fabricante antes de aplicarlo. Si no lo sabes con seguridad, dilo, no inventes cifras.
 - Avisa de los riesgos reales: sistemas de alta tensión en híbridos y eléctricos, airbags, combustible, elevación del vehículo.
-- Sé breve; usa listas cortas cuando ayuden.`;
+- Sé breve; usa listas cortas cuando ayuden.
+- No uses emojis ni símbolos decorativos. Escribe de forma natural y cercana, como si hablaras, con frases cortas.`;
 
 const EJEMPLOS = [
   "Código P0300 en un Volkswagen Golf 2015 1.6 TDI",
@@ -122,14 +127,13 @@ const player = new Audio();
 const SILENCIO = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 function desbloquear(){ try { player.src = SILENCIO; const p = player.play(); if (p) p.catch(()=>{}); } catch(e){} }
 function pararVoz(){ try { player.pause(); } catch(e){} if (window.speechSynthesis) speechSynthesis.cancel(); }
-function limpiar(t){ return t.replace(/[*`#]/g,'').replace(/^\s*[-•]\s+/gm,'').replace(/\s+/g,' ').trim().slice(0,4500); }
-async function hablar(texto){
-  if (!vozOn) return;
+function limpiar(t){ return t.replace(/[\p{Extended_Pictographic}\u200d\ufe0f\u20e3]/gu,'').replace(/[→•●▪■□★☆✓✔✗✘]/g,'').replace(/[*`#]/g,'').replace(/^\s*[-•]\s+/gm,'').replace(/\s+/g,' ').trim().slice(0,4500); }
+async function hablar(texto, gk = store.get('gkey', ''), nombre = store.get('voz', 'es-ES-Neural2-A'), forzar = false){
+  if (!vozOn && !forzar) return '';
   const t = limpiar(texto);
-  const gk = store.get('gkey', '');
+  let aviso = '';
   if (gk){
     try {
-      const nombre = store.get('voz', 'es-ES-Neural2-A');
       const r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(gk), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,17 +144,18 @@ async function hablar(texto){
         })
       });
       const d = await r.json();
-      if (!r.ok) throw new Error('TTS');
+      if (!r.ok) throw new Error((d.error && d.error.message) || ('Error ' + r.status));
       player.src = 'data:audio/mp3;base64,' + d.audioContent;
       await player.play();
-      return;
-    } catch(e){ /* sigue con la voz del sistema */ }
-  }
+      return 'ok';
+    } catch(e){ aviso = e.message; }
+  } else { aviso = 'falta la clave de Google.'; }
   if (window.speechSynthesis){
     const u = new SpeechSynthesisUtterance(t);
     u.lang = 'es-ES';
     speechSynthesis.speak(u);
   }
+  return aviso;
 }
 
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -266,6 +271,13 @@ $('#borrar').onclick = () => {
   $('#ajustes').classList.remove('on'); pintar();
 };
 
+$('#probar').onclick = async () => {
+  desbloquear(); pararVoz();
+  const el = $('#estado'); el.textContent = 'Probando…';
+  const res = await hablar('Hola, soy tu asistente de taller. Dime qué coche tienes y vemos qué le pasa.',
+    $('#gkey').value.trim(), $('#voz').value.trim() || 'es-ES-Neural2-A', true);
+  el.textContent = res === 'ok' ? 'Suena la voz de Google.' : 'Google no respondió: ' + res + ' Ahora suena la voz del iPhone.';
+};
 $('#vozbtn').onclick = () => {
   vozOn = !vozOn; store.set('vozOn', vozOn ? '1' : '0');
   $('#vozbtn').textContent = vozOn ? 'Voz: sí' : 'Voz: no';
